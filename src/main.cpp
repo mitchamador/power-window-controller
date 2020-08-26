@@ -5,7 +5,6 @@ AVR Core Clock frequency: 1,200000 MHz
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
-#include <util/delay.h>
 
 #define _IN(bit) (PINB & _BV(bit))
 #define _SET(bit) (PORTB |= (1 << bit))
@@ -23,11 +22,10 @@ AVR Core Clock frequency: 1,200000 MHz
 #define TIMER_RESOLUTION 4
 
 // time constants
-#define MOTOR_LIMIT (9000 / TIMER_RESOLUTION)
+#define MOTOR_LIMIT (8000 / TIMER_RESOLUTION)
 #define STOP_SWITCH_LIMIT (500 / TIMER_RESOLUTION)
 #define KEY_DEBOUNCE (20 / TIMER_RESOLUTION)
-#define KEY_MANUAL (250 / TIMER_RESOLUTION)
-
+#define KEY_MANUAL (200 / TIMER_RESOLUTION)
 
 // Timer 0 overflow interrupt service routine
 ISR(TIM0_OVF_vect)
@@ -41,27 +39,37 @@ ISR(TIM0_OVF_vect)
   TCNT0 = 0xB5;
 
   // Place your code here
-  
-  if (KEY_UP) {
-    if (key_up_counter <= KEY_MANUAL) {
+
+  if (KEY_UP)
+  {
+    if (key_up_counter <= KEY_MANUAL)
+    {
       key_up_counter++;
     }
 
-    if (key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL && (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))) {
+    if (key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL && (_IN(MOTOR_UP) || _IN(MOTOR_DOWN)))
+    {
       // stop motor when motor was on in any direction
       _CLEAR(MOTOR_UP);
       _CLEAR(MOTOR_DOWN);
       key_up_counter = KEY_MANUAL;
-    } else if (key_up_counter == KEY_MANUAL) {
+    }
+    else if (key_up_counter == KEY_MANUAL)
+    {
+      // start motor up (manual mode)
       _SET(MOTOR_UP);
       stop_switch_counter = 0;
     }
-
-  } else {
-    if (key_up_counter >= KEY_MANUAL) {
+  }
+  else
+  {
+    if (key_up_counter >= KEY_MANUAL)
+    {
       // stop motor up (manual mode)
       _CLEAR(MOTOR_UP);
-    } else if (key_up_counter > KEY_DEBOUNCE) {
+    }
+    else if (key_up_counter > KEY_DEBOUNCE)
+    {
       // start motor up (auto mode)
       _SET(MOTOR_UP);
       stop_switch_counter = 0;
@@ -69,27 +77,37 @@ ISR(TIM0_OVF_vect)
     key_up_counter = 0;
   }
 
-  if (KEY_DOWN) {
-    if (key_down_counter <= KEY_MANUAL) {
+  if (KEY_DOWN)
+  {
+    if (key_down_counter <= KEY_MANUAL)
+    {
       key_down_counter++;
     }
 
-    if (key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL && (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))) {
+    if (key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL && (_IN(MOTOR_UP) || _IN(MOTOR_DOWN)))
+    {
       // stop motor when motor was on in any direction
       _CLEAR(MOTOR_UP);
       _CLEAR(MOTOR_DOWN);
       key_down_counter = KEY_MANUAL;
-    } else if (key_down_counter == KEY_MANUAL) {
+    }
+    else if (key_down_counter == KEY_MANUAL)
+    {
+      // start motor down (manual mode)
       _SET(MOTOR_DOWN);
       stop_switch_counter = 0;
     }
-
-  } else {
-    if (key_down_counter >= KEY_MANUAL) {
-      // stop motor up (manual mode)
+  }
+  else
+  {
+    if (key_down_counter >= KEY_MANUAL)
+    {
+      // stop motor down (manual mode)
       _CLEAR(MOTOR_DOWN);
-    } else if (key_down_counter > KEY_DEBOUNCE) {
-      // start motor up (auto mode)
+    }
+    else if (key_down_counter > KEY_DEBOUNCE)
+    {
+      // start motor down (auto mode)
       _SET(MOTOR_DOWN);
       stop_switch_counter = 0;
     }
@@ -97,26 +115,33 @@ ISR(TIM0_OVF_vect)
   }
 
   if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
-  { 
-    if (stop_switch_counter < STOP_SWITCH_LIMIT) {
+  {
+    if (stop_switch_counter < STOP_SWITCH_LIMIT)
+    {
       stop_switch_counter++;
-    } else {
-      if (STOP) {
+    }
+    else
+    {
+      if (STOP)
+      {
+        // stop motor by switch
         motor_timer = MOTOR_LIMIT;
       }
     }
 
-    if (motor_timer < 0xFFFF)
+    if (motor_timer < MOTOR_LIMIT)
       motor_timer++;
   }
   else
     motor_timer = 0;
 
-  if (motor_timer > MOTOR_LIMIT)
+  if (motor_timer >= MOTOR_LIMIT)
   {
+    // stop motor by time limit
     _CLEAR(MOTOR_UP);
     _CLEAR(MOTOR_DOWN);
   }
+
 }
 
 int main(void)
@@ -175,6 +200,7 @@ int main(void)
   // Global enable interrupts
   sei();
 
-  for (;;)
-    ;
+  while(1)
+  {
+  }
 }
