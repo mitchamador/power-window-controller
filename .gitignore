@@ -6,3 +6,4 @@
 .vscode/ipch
 power-window-controller.code-workspace
 proteus/*.pdsbak
+proteus/*.workspace
