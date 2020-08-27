@@ -4,6 +4,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-power-window-controller.code-workspace
+*.code-workspace
 proteus/*.pdsbak
 proteus/*.workspace
