@@ -35,6 +35,9 @@ ISR(TIM0_OVF_vect)
   static uint8_t key_down_counter;
   static uint16_t motor_timer;
 
+  static bool auto_up;
+  static bool auto_down;
+
   // Reinitialize Timer 0 value
   TCNT0 = 0xB5;
 
@@ -47,18 +50,22 @@ ISR(TIM0_OVF_vect)
       key_up_counter++;
     }
 
-    if (key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL && (_IN(MOTOR_UP) || _IN(MOTOR_DOWN)))
+    if (!auto_up && key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL)
     {
-      // stop motor when motor was on in any direction
-      _CLEAR(MOTOR_UP);
-      _CLEAR(MOTOR_DOWN);
-      key_up_counter = KEY_MANUAL;
-    }
-    else if (key_up_counter == KEY_MANUAL)
-    {
-      // start motor up (manual mode)
-      _SET(MOTOR_UP);
-      stop_switch_counter = 0;
+      if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+      {
+        // stop motor when motor was on in any direction
+        _CLEAR(MOTOR_UP);
+        _CLEAR(MOTOR_DOWN);
+        key_up_counter = KEY_MANUAL;
+      }
+      else
+      {
+        // start motor up
+        _SET(MOTOR_UP);
+        stop_switch_counter = 0;
+        auto_up = true;
+      }
     }
   }
   else
@@ -68,12 +75,7 @@ ISR(TIM0_OVF_vect)
       // stop motor up (manual mode)
       _CLEAR(MOTOR_UP);
     }
-    else if (key_up_counter > KEY_DEBOUNCE)
-    {
-      // start motor up (auto mode)
-      _SET(MOTOR_UP);
-      stop_switch_counter = 0;
-    }
+    auto_up = false;
     key_up_counter = 0;
   }
 
@@ -84,18 +86,22 @@ ISR(TIM0_OVF_vect)
       key_down_counter++;
     }
 
-    if (key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL && (_IN(MOTOR_UP) || _IN(MOTOR_DOWN)))
+    if (!auto_down && key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL)
     {
-      // stop motor when motor was on in any direction
-      _CLEAR(MOTOR_UP);
-      _CLEAR(MOTOR_DOWN);
-      key_down_counter = KEY_MANUAL;
-    }
-    else if (key_down_counter == KEY_MANUAL)
-    {
-      // start motor down (manual mode)
-      _SET(MOTOR_DOWN);
-      stop_switch_counter = 0;
+      if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+      {
+        // stop motor when motor was on in any direction
+        _CLEAR(MOTOR_UP);
+        _CLEAR(MOTOR_DOWN);
+        key_down_counter = KEY_MANUAL;
+      }
+      else
+      {
+        // start motor down
+        _SET(MOTOR_DOWN);
+        stop_switch_counter = 0;
+        auto_down = true;
+      }
     }
   }
   else
@@ -105,12 +111,7 @@ ISR(TIM0_OVF_vect)
       // stop motor down (manual mode)
       _CLEAR(MOTOR_DOWN);
     }
-    else if (key_down_counter > KEY_DEBOUNCE)
-    {
-      // start motor down (auto mode)
-      _SET(MOTOR_DOWN);
-      stop_switch_counter = 0;
-    }
+    auto_down = false;
     key_down_counter = 0;
   }
 
@@ -141,7 +142,6 @@ ISR(TIM0_OVF_vect)
     _CLEAR(MOTOR_UP);
     _CLEAR(MOTOR_DOWN);
   }
-
 }
 
 int main(void)
@@ -200,7 +200,7 @@ int main(void)
   // Global enable interrupts
   sei();
 
-  while(1)
+  while (1)
   {
   }
 }
