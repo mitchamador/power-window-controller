@@ -7,8 +7,8 @@ AVR Core Clock frequency: 1,200000 MHz
 #include <avr/interrupt.h>
 
 #define _IN(bit) (PINB & _BV(bit))
-#define _SET(bit) (PORTB |= (1 << bit))
-#define _CLEAR(bit) (PORTB &= ~(1 << bit))
+#define _SET(bit) (PORTB |= _BV(bit))
+#define _CLEAR(bit) (PORTB &= ~_BV(bit))
 
 #define STOP (!(_IN(PB1)))
 
@@ -18,14 +18,59 @@ AVR Core Clock frequency: 1,200000 MHz
 #define KEY_UP (_IN(PB3))
 #define KEY_DOWN (_IN(PB4))
 
+// Bandgap Voltage Reference: Off
+#define ADC_VREF_TYPE ((0 << REFS0) | (0 << ADLAR))
+
 // timer resolution, ms
 #define TIMER_RESOLUTION 4
 
 // time constants
 #define MOTOR_LIMIT (8000 / TIMER_RESOLUTION)
-#define STOP_SWITCH_LIMIT (500 / TIMER_RESOLUTION)
-#define KEY_DEBOUNCE (20 / TIMER_RESOLUTION)
+#define STOP_SWITCH_LIMIT (250 / TIMER_RESOLUTION)
+#define KEY_DEBOUNCE (40 / TIMER_RESOLUTION)
 #define KEY_MANUAL (200 / TIMER_RESOLUTION)
+
+#define ADC_AVERAGE_SAMPLES 4
+#define AUTO_CLOSE_THRESHOLD (1000 / ADC_AVERAGE_SAMPLES / TIMER_RESOLUTION)
+
+volatile bool close_fl;
+bool close_state_fl;
+
+// ADC interrupt service routine
+ISR(ADC_vect)
+{
+
+  static int adc_tmp, auto_close_counter;
+  static unsigned char adc_counter = ADC_AVERAGE_SAMPLES;
+
+  adc_tmp += ADCW;
+
+  if (--adc_counter == 0)
+  {
+    adc_counter = ADC_AVERAGE_SAMPLES;
+
+    // check if ADC < ~4,5V (resistor divider 10k to close signal and 2,2k to +5v)
+    if ((adc_tmp / ADC_AVERAGE_SAMPLES) < 920)
+    {
+      if (auto_close_counter >= AUTO_CLOSE_THRESHOLD)
+      {
+        close_fl = true;
+      }
+      else
+      {
+        auto_close_counter++;
+      }
+    }
+    else
+    {
+      auto_close_counter = 0;
+      close_fl = false;
+    }
+
+    adc_tmp = 0;
+  }
+
+}
 
 // Timer 0 overflow interrupt service routine
 ISR(TIM0_OVF_vect)
@@ -42,77 +87,103 @@ ISR(TIM0_OVF_vect)
   TCNT0 = 0xB5;
 
   // Place your code here
-
-  if (KEY_UP)
+  if (close_fl)
   {
-    if (key_up_counter <= KEY_MANUAL)
+    if (!close_state_fl)
     {
-      key_up_counter++;
-    }
+      close_state_fl = true;
 
-    if (!auto_up && key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL)
-    {
-      if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
-      {
-        // stop motor when motor was on in any direction
-        _CLEAR(MOTOR_UP);
-        _CLEAR(MOTOR_DOWN);
-        key_up_counter = KEY_MANUAL;
-      }
-      else
-      {
-        // start motor up
-        _SET(MOTOR_UP);
-        stop_switch_counter = 0;
-        auto_up = true;
-      }
-    }
-  }
-  else
-  {
-    if (key_up_counter >= KEY_MANUAL)
-    {
-      // stop motor up (manual mode)
+      key_up_counter = 0; key_down_counter = 0;
+      auto_up = false; auto_down = false;
+
+      // stop motor when motor was on in any direction
       _CLEAR(MOTOR_UP);
-    }
-    auto_up = false;
-    key_up_counter = 0;
-  }
+      _CLEAR(MOTOR_DOWN);
 
-  if (KEY_DOWN)
-  {
-    if (key_down_counter <= KEY_MANUAL)
-    {
-      key_down_counter++;
-    }
-
-    if (!auto_down && key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL)
-    {
-      if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
-      {
-        // stop motor when motor was on in any direction
-        _CLEAR(MOTOR_UP);
-        _CLEAR(MOTOR_DOWN);
-        key_down_counter = KEY_MANUAL;
-      }
-      else
-      {
-        // start motor down
-        _SET(MOTOR_DOWN);
-        stop_switch_counter = 0;
-        auto_down = true;
-      }
+      // start motor up
+      _SET(MOTOR_UP);
+      stop_switch_counter = 0;
     }
   }
   else
   {
-    if (key_down_counter >= KEY_MANUAL)
-    {
-      // stop motor down (manual mode)
+    if (close_state_fl) {
+      // stop motor when motor was on in any direction
+      _CLEAR(MOTOR_UP);
       _CLEAR(MOTOR_DOWN);
+      close_state_fl = false;
     }
-    auto_down = false;
-    key_down_counter = 0;
+    if (KEY_UP)
+    {
+      if (key_up_counter <= KEY_MANUAL)
+      {
+        key_up_counter++;
+      }
+
+      if (!auto_up && key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL)
+      {
+        if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+        {
+          // stop motor when motor was on in any direction
+          _CLEAR(MOTOR_UP);
+          _CLEAR(MOTOR_DOWN);
+          key_up_counter = KEY_MANUAL;
+        }
+        else
+        {
+          // start motor up
+          _SET(MOTOR_UP);
+          stop_switch_counter = 0;
+          auto_up = true;
+        }
+      }
+    }
+    else
+    {
+      if (key_up_counter >= KEY_MANUAL)
+      {
+        // stop motor up (manual mode)
+        _CLEAR(MOTOR_UP);
+      }
+      auto_up = false;
+      key_up_counter = 0;
+    }
+
+    if (KEY_DOWN)
+    {
+      if (key_down_counter <= KEY_MANUAL)
+      {
+        key_down_counter++;
+      }
+
+      if (!auto_down && key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL)
+      {
+        if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+        {
+          // stop motor when motor was on in any direction
+          _CLEAR(MOTOR_UP);
+          _CLEAR(MOTOR_DOWN);
+          key_down_counter = KEY_MANUAL;
+        }
+        else
+        {
+          // start motor down
+          _SET(MOTOR_DOWN);
+          stop_switch_counter = 0;
+          auto_down = true;
+        }
+      }
+    }
+    else
+    {
+      if (key_down_counter >= KEY_MANUAL)
+      {
+        // stop motor down (manual mode)
+        _CLEAR(MOTOR_DOWN);
+      }
+      auto_down = false;
+      key_down_counter = 0;
+    }
   }
 
   if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
@@ -167,7 +238,6 @@ int main(void)
   // OC0B output: Disconnected
   // Timer Period: 4 ms
   TCCR0A = (0 << COM0A1) | (0 << COM0A0) | (0 << COM0B1) | (0 << COM0B0) | (0 << WGM01) | (0 << WGM00);
-  TCCR0B = (0 << WGM02) | (0 << CS02) | (1 << CS01) | (1 << CS00);
   TCNT0 = 0xB5;
   OCR0A = 0x00;
   OCR0B = 0x00;
@@ -194,9 +264,18 @@ int main(void)
   DIDR0 = (0 << AIN0D) | (0 << AIN1D);
 
   // ADC initialization
-  // ADC disabled
-  ADCSRA = (0 << ADEN) | (0 << ADSC) | (0 << ADATE) | (0 << ADIF) | (0 << ADIE) | (0 << ADPS2) | (0 << ADPS1) | (0 << ADPS0);
+  // ADC Clock frequency: 75,000 kHz
+  // ADC Bandgap Voltage Reference: Off
+  // ADC Auto Trigger Source: Timer/Counter Overflow
+  // ADC channel ADC0 (PB5/RESET pin)
+  // Digital input buffers on ADC0: Off, ADC1: On, ADC2: On, ADC3: On
+  DIDR0 |= (1 << ADC0D) | (0 << ADC2D) | (0 << ADC3D) | (0 << ADC1D);
+  ADMUX = ADC_VREF_TYPE | (0 << MUX1) | (0 << MUX0);
+  ADCSRA = (1 << ADEN) | (0 << ADSC) | (1 << ADATE) | (0 << ADIF) | (1 << ADIE) | (1 << ADPS2) | (0 << ADPS1) | (0 << ADPS0);
+  ADCSRB = (1 << ADTS2) | (0 << ADTS1) | (0 << ADTS0);
 
+  // start timer0
+  TCCR0B = (0 << WGM02) | (0 << CS02) | (1 << CS01) | (1 << CS00);
   // Global enable interrupts
   sei();
 
