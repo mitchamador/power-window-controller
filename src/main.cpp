@@ -36,12 +36,13 @@ AVR Core Clock frequency: 1,200000 MHz
 volatile bool close_fl;
 bool close_state_fl;
 
-// ADC interrupt service routine
-ISR(ADC_vect)
-{
+uint16_t adc_tmp;
+uint8_t auto_close_counter;
+uint8_t adc_counter = ADC_AVERAGE_SAMPLES;
 
-  static int adc_tmp, auto_close_counter;
-  static unsigned char adc_counter = ADC_AVERAGE_SAMPLES;
+// ADC interrupt service routine
+ISR(ADC_vect, ISR_NAKED)
+{
 
   adc_tmp += ADCW;
 
@@ -70,18 +71,18 @@ ISR(ADC_vect)
     adc_tmp = 0;
   }
 
+  reti();
 }
 
-// Timer 0 overflow interrupt service routine
-ISR(TIM0_OVF_vect)
-{
-  static uint8_t stop_switch_counter;
-  static uint8_t key_up_counter;
-  static uint8_t key_down_counter;
-  static uint16_t motor_timer;
+uint8_t stop_switch_counter;
+uint8_t key_up_counter, key_down_counter;
+uint16_t motor_timer;
 
-  static bool auto_up;
-  static bool auto_down;
+bool auto_up, auto_down;
+
+// Timer 0 overflow interrupt service routine
+ISR(TIM0_OVF_vect, ISR_NAKED)
+{
 
   // Reinitialize Timer 0 value
   TCNT0 = 0xB5;
@@ -93,12 +94,15 @@ ISR(TIM0_OVF_vect)
     {
       close_state_fl = true;
 
-      key_up_counter = 0; key_down_counter = 0;
-      auto_up = false; auto_down = false;
+      key_up_counter = 0;
+      key_down_counter = 0;
+      auto_up = false;
+      auto_down = false;
 
       // stop motor when motor was on in any direction
       _CLEAR(MOTOR_UP);
       _CLEAR(MOTOR_DOWN);
+      motor_timer = 0;
 
       // start motor up
       _SET(MOTOR_UP);
@@ -107,82 +111,91 @@ ISR(TIM0_OVF_vect)
   }
   else
   {
-    if (close_state_fl) {
+    if (close_state_fl)
+    {
       // stop motor when motor was on in any direction
       _CLEAR(MOTOR_UP);
       _CLEAR(MOTOR_DOWN);
+      motor_timer = 0;
+
       close_state_fl = false;
-    }
-    if (KEY_UP)
-    {
-      if (key_up_counter <= KEY_MANUAL)
-      {
-        key_up_counter++;
-      }
-
-      if (!auto_up && key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL)
-      {
-        if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
-        {
-          // stop motor when motor was on in any direction
-          _CLEAR(MOTOR_UP);
-          _CLEAR(MOTOR_DOWN);
-          key_up_counter = KEY_MANUAL;
-        }
-        else
-        {
-          // start motor up
-          _SET(MOTOR_UP);
-          stop_switch_counter = 0;
-          auto_up = true;
-        }
-      }
+      // set stop switch gpio default state
+      DDRB &= ~(1 << DDB1);
+      _SET(PB1);
     }
     else
     {
-      if (key_up_counter >= KEY_MANUAL)
+      if (KEY_UP)
       {
-        // stop motor up (manual mode)
-        _CLEAR(MOTOR_UP);
-      }
-      auto_up = false;
-      key_up_counter = 0;
-    }
-
-    if (KEY_DOWN)
-    {
-      if (key_down_counter <= KEY_MANUAL)
-      {
-        key_down_counter++;
-      }
-
-      if (!auto_down && key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL)
-      {
-        if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+        if (key_up_counter <= KEY_MANUAL)
         {
-          // stop motor when motor was on in any direction
+          key_up_counter++;
+        }
+
+        if (!auto_up && key_up_counter > KEY_DEBOUNCE && key_up_counter < KEY_MANUAL)
+        {
+          if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+          {
+            // stop motor when motor was on in any direction
+            _CLEAR(MOTOR_UP);
+            _CLEAR(MOTOR_DOWN);
+            key_up_counter = KEY_MANUAL;
+          }
+          else
+          {
+            // start motor up
+            _SET(MOTOR_UP);
+            stop_switch_counter = 0;
+            auto_up = true;
+          }
+        }
+      }
+      else
+      {
+        if (key_up_counter >= KEY_MANUAL)
+        {
+          // stop motor up (manual mode)
           _CLEAR(MOTOR_UP);
-          _CLEAR(MOTOR_DOWN);
-          key_down_counter = KEY_MANUAL;
         }
-        else
-        {
-          // start motor down
-          _SET(MOTOR_DOWN);
-          stop_switch_counter = 0;
-          auto_down = true;
-        }
+        auto_up = false;
+        key_up_counter = 0;
       }
-    }
-    else
-    {
-      if (key_down_counter >= KEY_MANUAL)
+
+      if (KEY_DOWN)
       {
-        // stop motor down (manual mode)
-        _CLEAR(MOTOR_DOWN);
+        if (key_down_counter <= KEY_MANUAL)
+        {
+          key_down_counter++;
+        }
+
+        if (!auto_down && key_down_counter > KEY_DEBOUNCE && key_down_counter < KEY_MANUAL)
+        {
+          if (_IN(MOTOR_UP) || _IN(MOTOR_DOWN))
+          {
+            // stop motor when motor was on in any direction
+            _CLEAR(MOTOR_UP);
+            _CLEAR(MOTOR_DOWN);
+            key_down_counter = KEY_MANUAL;
+          }
+          else
+          {
+            // start motor down
+            _SET(MOTOR_DOWN);
+            stop_switch_counter = 0;
+            auto_down = true;
+          }
+        }
       }
-      auto_down = false;
-      key_down_counter = 0;
+      else
+      {
+        if (key_down_counter >= KEY_MANUAL)
+        {
+          // stop motor down (manual mode)
+          _CLEAR(MOTOR_DOWN);
+        }
+        auto_down = false;
+        key_down_counter = 0;
+      }
     }
   }
 
@@ -212,7 +225,17 @@ ISR(TIM0_OVF_vect)
     // stop motor by time limit
     _CLEAR(MOTOR_UP);
     _CLEAR(MOTOR_DOWN);
+    motor_timer = 0;
   }
+
+  if (motor_timer == 0 && close_state_fl)
+  {
+    // set stop switch gpio to 0 output (cascade closing)
+    DDRB |= (1 << DDB1);
+    _CLEAR(PB1);
+  }
+
+  reti();
 }
 
 int main(void)
