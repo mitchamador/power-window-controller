@@ -5,6 +5,36 @@ AVR Core Clock frequency: 1,200000 MHz
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/eeprom.h>
+
+// save state in eeprom
+#define EEPROM_SAVE_STATE
+
+#ifdef EEPROM_SAVE_STATE
+
+uint8_t EEMEM ee_need_close_state;
+
+// save to eeprom in interrupt routine (decrease memory usage)
+#define EEPROM_SAVE_IN_INTERRUPT
+
+#ifdef EEPROM_SAVE_IN_INTERRUPT
+
+void eeprom_save_state(uint8_t state) {
+    if (eeprom_read_byte(&ee_need_close_state) != state) {
+      eeprom_write_byte(&ee_need_close_state, state);
+    }
+}
+
+#else
+
+volatile uint8_t need_close_state;
+volatile uint8_t need_close_save_fl = 0;
+
+#define eeprom_save_state(state) need_close_state = state; need_close_save_fl = 1
+
+#endif // EEPROM_SAVE_IN_INTERRUPT
+
+#endif // EEPROM_SAVE_STATE
 
 #define _IN(bit) (PINB & _BV(bit))
 #define _SET(bit) (PORTB |= _BV(bit))
@@ -24,54 +54,45 @@ AVR Core Clock frequency: 1,200000 MHz
 // timer resolution, ms
 #define TIMER_RESOLUTION 4
 
-// time constants
+// time constants, ms
 #define MOTOR_LIMIT (8000 / TIMER_RESOLUTION)
 #define STOP_SWITCH_LIMIT (250 / TIMER_RESOLUTION)
 #define KEY_DEBOUNCE (40 / TIMER_RESOLUTION)
 #define KEY_MANUAL (200 / TIMER_RESOLUTION)
-
-#define ADC_AVERAGE_SAMPLES 4
-#define AUTO_CLOSE_THRESHOLD (1000 / ADC_AVERAGE_SAMPLES / TIMER_RESOLUTION)
+#define AUTO_CLOSE_THRESHOLD (1000 / TIMER_RESOLUTION)
 
 volatile bool close_fl;
 bool close_state_fl;
 
-uint16_t adc_tmp;
 uint8_t auto_close_counter;
-uint8_t adc_counter = ADC_AVERAGE_SAMPLES;
 
 // ADC interrupt service routine
+#if !defined(EEPROM_SAVE_STATE) || defined(EEPROM_SAVE_IN_INTERRUPT)
 ISR(ADC_vect, ISR_NAKED)
+#else
+ISR(ADC_vect)
+#endif
 {
-
-  adc_tmp += ADCW;
-
-  if (--adc_counter == 0)
+  // check if ADC < ~4,5V (resistor divider 10k to close signal and 2,2k to +5v)
+  if (ADCW < 920)
   {
-    adc_counter = ADC_AVERAGE_SAMPLES;
-
-    // check if ADC < ~4,5V (resistor divider 10k to close signal and 2,2k to +5v)
-    if ((adc_tmp / ADC_AVERAGE_SAMPLES) < 920)
+    if (auto_close_counter >= AUTO_CLOSE_THRESHOLD)
     {
-      if (auto_close_counter >= AUTO_CLOSE_THRESHOLD)
-      {
-        close_fl = true;
-      }
-      else
-      {
-        auto_close_counter++;
-      }
+      close_fl = true;
     }
     else
     {
-      auto_close_counter = 0;
-      close_fl = false;
+      auto_close_counter++;
     }
-
-    adc_tmp = 0;
   }
-
+  else
+  {
+    auto_close_counter = 0;
+    close_fl = false;
+  }
+#if !defined(EEPROM_SAVE_STATE) || defined(EEPROM_SAVE_IN_INTERRUPT)
   reti();
+#endif
 }
 
 uint8_t stop_switch_counter;
@@ -80,8 +101,14 @@ uint16_t motor_timer;
 
 bool auto_up, auto_down;
 
+bool auto_close_finished_fl;
+
 // Timer 0 overflow interrupt service routine
+#if !defined(EEPROM_SAVE_STATE) || defined(EEPROM_SAVE_IN_INTERRUPT)
 ISR(TIM0_OVF_vect, ISR_NAKED)
+#else
+ISR(TIM0_OVF_vect)
+#endif
 {
 
   // Reinitialize Timer 0 value
@@ -93,6 +120,7 @@ ISR(TIM0_OVF_vect, ISR_NAKED)
     if (!close_state_fl)
     {
       close_state_fl = true;
+      auto_close_finished_fl = false;
 
       key_up_counter = 0;
       key_down_counter = 0;
@@ -104,8 +132,14 @@ ISR(TIM0_OVF_vect, ISR_NAKED)
       _CLEAR(MOTOR_DOWN);
       motor_timer = 0;
 
-      // start motor up
-      _SET(MOTOR_UP);
+#ifdef EEPROM_SAVE_STATE
+      // read flag for autoclose
+      if (eeprom_read_byte((const uint8_t *) &ee_need_close_state) != 0)
+#endif
+      {
+        // start motor up
+        _SET(MOTOR_UP);
+      }
       stop_switch_counter = 0;
     }
   }
@@ -179,6 +213,9 @@ ISR(TIM0_OVF_vect, ISR_NAKED)
           }
           else
           {
+#ifdef EEPROM_SAVE_STATE
+            eeprom_save_state(1);
+#endif
             // start motor down
             _SET(MOTOR_DOWN);
             stop_switch_counter = 0;
@@ -228,14 +265,21 @@ ISR(TIM0_OVF_vect, ISR_NAKED)
     motor_timer = 0;
   }
 
-  if (motor_timer == 0 && close_state_fl)
+  if (motor_timer == 0 && close_state_fl && !auto_close_finished_fl)
   {
+    auto_close_finished_fl = true;
+
+#ifdef EEPROM_SAVE_STATE
+    eeprom_save_state(0);
+#endif
     // set stop switch gpio to 0 output (cascade closing)
     DDRB |= (1 << DDB1);
     _CLEAR(PB1);
   }
 
+#if !defined(EEPROM_SAVE_STATE) || defined(EEPROM_SAVE_IN_INTERRUPT)
   reti();
+#endif
 }
 
 int main(void)
@@ -304,5 +348,14 @@ int main(void)
 
   while (1)
   {
+#if defined(EEPROM_SAVE_STATE) && !defined(EEPROM_SAVE_IN_INTERRUPT)
+    if (need_close_save_fl != 0) {
+      need_close_save_fl = 0;
+      // save flag for autoclose
+      if (need_close_state != eeprom_read_byte(&ee_need_close_state)) {
+        eeprom_write_byte(&ee_need_close_state, need_close_state);
+      }
+    }
+#endif    
   }
 }
