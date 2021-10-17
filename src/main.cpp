@@ -214,6 +214,7 @@ ISR(TIM0_OVF_vect)
           else
           {
 #ifdef EEPROM_SAVE_STATE
+            // set close flag (window is not closed)
             eeprom_save_state(1);
 #endif
             // start motor down
@@ -248,6 +249,14 @@ ISR(TIM0_OVF_vect)
       {
         // stop motor by switch
         motor_timer = MOTOR_LIMIT;
+
+#ifdef EEPROM_SAVE_STATE
+        // clear close flag when motor was in up direction and stopped by switch (window is closed)
+        if (_IN(MOTOR_UP)) {
+          eeprom_save_state(0);
+        }
+#endif
+
       }
     }
 
